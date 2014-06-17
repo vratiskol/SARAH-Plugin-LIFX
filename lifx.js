@@ -3,24 +3,24 @@
 // ------------------------------------------
 
 var lx = false;
+
 exports.init = function(SARAH){
   
   if (lx) return;
-  
+   
   var lifx = require('./lib');
+  var color = require('./lib/color');
+
   lifx.setDebug(false);
   
   lx = lifx.init();
-  lx.on('bulbstate', function(b) {
-    //console.log('Bulb state: ' + util.inspect(b));
-  });
   
-  lx.on('bulbonoff', function(b) {
-    //console.log('Bulb on/off: ' + util.inspect(b));
-  });
+  lx.on('bulbstate', function(b) {});
+  
+  lx.on('bulbonoff', function(b) {});
   
   lx.on('bulb', function(b) {
-    console.log('New bulb found: ' + b.name);
+    console.log('New bulb found : ' + b.name);
   });
   
   lx.on('gateway', function(g) {
@@ -32,12 +32,12 @@ exports.init = function(SARAH){
     switch (p.packetTypeShortName) {
       case 'powerState':
       case 'wifiInfo':
-      case 'wifiFirmwareState':
+	  case 'wifiFirmwareState':
       case 'wifiState':
       case 'accessPoint':
       case 'bulbLabel':
       case 'tags':
-      case 'tagLabels':
+	  case 'tagLabels':
       //case 'lightStatus':
       case 'timeState':
       case 'resetSwitchState':
@@ -46,43 +46,14 @@ exports.init = function(SARAH){
       case 'versionState':
       case 'infoState':
       case 'mcuRailVoltage':
-        console.log(p.packetTypeName + " - " + p.preamble.bulbAddress.toString('hex') + " - " + util.inspect(p.payload));
+	  case 'stateambientlight':
+        console.log(p.packetTypeName + " - " + lx.getBulbByLifxAddress(p.preamble.bulbAddress).toString() + " (" + p.preamble.bulbAddress.toString('hex') + ")");
+		console.log(util.inspect(p.payload));
         break;
     }
   });
 }
 
-// ------------------------------------------
-//  COLOR ALGORITHM
-// ------------------------------------------
-
-function hexStringToRgb(s) {
-    return {
-        r: parseInt(s.substring(0, 2), 16) / 255,
-        g: parseInt(s.substring(2, 4), 16) / 255,
-        b: parseInt(s.substring(4, 6), 16) / 255
-    };
-}
-
-var rgbToHsl = function(r, g, b){
-  r /= 255, g /= 255, b /= 255;
-  var max = Math.max(r, g, b), min = Math.min(r, g, b);
-  var h, s, l = (max + min) / 2;
-
-  if(max == min){
-      h = s = 0; // achromatic
-  } else {
-      var d = max - min;
-      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-      switch(max){
-          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-          case g: h = (b - r) / d + 2; break;
-          case b: h = (r - g) / d + 4; break;
-      }
-      h /= 6;
-  }
-  return [h, s, l];
-}
 
 // ------------------------------------------
 //  INTERFACE
@@ -97,112 +68,182 @@ exports.action = function(data, callback, config, SARAH){
   if (false){
     return callback('tts', 'Configuration LIFX invalide');
   }
-console.log(data);
-  // Switch On / Off
-  if (data.on == "true"){
-    console.log("Lights on");
-    lx.lightsOn(); 
-  } else { 
-    console.log("Lights off");
-    lx.lightsOff();  
-  }
+
+// Switch On / Off 
+// All Bulbs
+if (typeof data.bulbname ==  "") {
+	if (data.on == "true" ){
+		console.log("All Lights on");
+		lx.lightsOn(); 
+	} else if (data.on == "false"){ 
+		console.log("All Lights off");
+		lx.lightsOff();  
+	};
+}
+else if (data.bulbname) {	
+// One Bulb
+	var bulb = lx.getBulbidByName(data.bulbname);
+	if (bulb != false) {
+		if (data.on == "true" && bulb){
+			lx.lightsOn(bulb);
+			console.log("Light on: "+data.bulbname);
+		} else if (data.on == "false" && bulb){
+			lx.lightsOff(bulb);
+			console.log("Light off: "+data.bulbname);
+		}
+	}
+		
+};
+
+
+// Dim du bulb en absolute (duration en option)
+if (data.dim && data.brightness && data.bulbname) {
+	var bulb = lx.getBulbidByName(data.bulbname);
+	if (bulb != false) {
+		var lum = data.brightness;
+		
+		
+		//var buf = new Buffer(4);
+		//lum=buf.writeUInt32LE(lum, 0);
+		//lum=buf.toString();
+				
+		if (data.timing) {
+			var timing = data.timing * 1000;
+			timing = '0x'+timing.toString(16);
+			console.log('Hex Timing '+timing);
+		} else {
+			var timing = 0;
+		}
+		
+		if (data.dim =="absolute") {
+			lum = Math.round(lum * 1.27);
+			lum_bin = lum.toString(2);
+			lum_bin_pad = lum << 8;
+			console.log(lum_bin_pad.toString(2));
+			lum_hex = "0x"+lum_bin_pad.toString(16);
+			console.log("Absolute");
+			lx.DimAbsolute(lum_hex,0,bulb);
+		} else if (data.dim =="relative") {
+			console.log("Relative");
+			lx.DimRelative(lum,0,bulb);
+		}
+	}
+}
+ 
+// Dim Color: hue, sat, lum, whitecol, timing, (bulb)
+// Timing => optionnal 
   
-  // Dim Color: hue, sat, lum, whitecol, timing, (bulb)
-  if (data.rgb){
-    console.log("Dim "+data.rgb);
-    
-    var rgb = hexStringToRgb(data.rgb);
-    var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
-    console.log(rgb,' => ',hsl);
-    
-    data.hue = Math.round(hsl[0] * 65535);
-    data.sat = Math.round(hsl[1] * 65535);
-    data.bri = Math.round(hsl[2] * 65535);
-    data.bri = Math.round(data.bri / 260 * 65535);
-    
-    var hue = '0x'+data.hue.toString(16);
-    var sat = '0x'+data.sat.toString(16);
-    var lum = '0x'+data.bri.toString(16);
-    
-    lx.lightsColour(hue, sat, lum, 0, 0);
-  }
+if (data.rgb && data.bulbname) {
+ 	var bulb = lx.getBulbidByName(data.bulbname);
+	if (bulb != false) {
+		
+		console.log("Bulb :" +data.bulbname+ " - Dim "+data.rgb+ " - Timing : "+data.timing+" s" );
+		
+		if (data.rgb == "random") {
+			var hsl= color.random_color();
+		} else if  (data.rgb == "white" || data.rgb == "blanc") {
+			var hsl= color.white()
+		} else {
+			var rgb = color.hexStringToRgb(data.rgb);
+			var hsl = color.rgbToHsl(rgb.r, rgb.g, rgb.b);
+		}
+		// console.log(rgb,' => ',hsl);
+    		
+		if (data.timing) {
+		// 2147483647 ms max / 2147483 sec / 35791 min / 596 heures / 24 jours max
+		// 2147,483647 sec / 
+		//  7FFFFFFF /
+		//0x5f5e100
+			var timing = data.timing * 1000;
+			timing = '0x'+timing.toString(16);
+			console.log('Hex Timing '+timing);
+		} else {
+			var timing = 0;
+		}
+		lx.lightsColour(hsl.h, hsl.s, hsl.l, hsl.k, timing, bulb);
+	}
+};
+
+
+
+ 
+// Get Bulb Status (on/off)
+  if (data.getstatus && data.bulbname) {
+	var bulb = lx.getBulbidByName(data.bulbname);
+	if (bulb != false) {
+		var powerstatus = lx.GetBulbPowerStatus(bulb);
+	
+		if (typeof powerstatus != 'undefined') {
+			console.log("La lampe "+data.bulbname+" est "+powerstatus);
+		}
+	}
+  };
+  
+  
+// Get Color of a bulb (rgb and hex format)
+  if (data.getcolor && data.bulbname) {
+	var bulb = lx.getBulbidByName(data.bulbname);
+	if (bulb != false) {	
+		var color_hsl = lx.GetBulbColor(bulb);
+		// Couleur au format hsl en radian
+		//console.log("hsl("+color[0]/360+"%,"+color[1]/360+"%,"+color[2]/360+"%)");
+	
+		//hsl(0%,0%,47.63055555555555%)
+		//{ r: 121, g: 121, b: 121 }
+		var color_rgb = color.HslTorgb(color_hsl[0],color_hsl[1],color_hsl[2]);
+		console.log('Lum:'+color_hsl[2]);
+		if (typeof color_rgb != 'undefined') {
+			var color_rgb_hex = color.rgbToHex(color_rgb.r,color_rgb.g,color_rgb.b);
+			console.log(color_rgb);
+			console.log(color_rgb_hex);
+		}
+	}
+}
+ 
+if (data.ambientlight && data.bulbmane) {
+	var bulb = lx.getBulbidByName(data.bulbname);
+	if (bulb != false) {
+		lx.getCurrentAmbientLight(bulb)
+	};
+};
+
+ 
+  // Gestion des Tags
+  
+ if (data.tags) {
+	lx.getTags()
+ };
+ 
+  if (data.tagslabel) {
+	lx.getTagLabels()
+ };
+  
+  // Reboot bulb
+    if (data.reboot == "true" && data.bulbname) {
+	lx.RebootBulb(lx.getBulbidByName(data.bulbname));
+	console("LIFX - Reboot du bulb "+data.bulbname);
+  };
+  
+    // Bulb Technical Info
+    if (data.meshinfo && data.bulbname) {
+	var mesh = lx.BulbTechInfo(lx.getBulbidByName(data.bulbname));
+  };
+  
+    // Bulb FW Version
+    if (data.fw_version && data.bulbname) {
+		var fw = lx.MeshFirmware(lx.getBulbidByName(data.bulbname));
+	};
+ 
+	if (data.voltage && data.bulbname) {
+		var voltage = lx.getVoltage(lx.getBulbidByName(data.bulbname));
+	};
+  
+
+	
+	
+  
   
   return callback({}); 
   
-  /*
-  if (data.rgb == "red"){
-    console.log("Dim red");
-    lx.lightsColour(0x0000, 0xffff, 1000, 0, 0);
-  }
-  else if (data.rgb == "purple"){
-    console.log("Dim purple");
-  lx.lightsColour(0xcc15, 0xffff, 500, 0, 0);
-  }
-  else if (data.rgb == "white"){
-    console.log("Dim purple");
-    lx.lightsColour(0x0000, 0x0000, 0x8000, 0x0af0, 0x0513);
-  }
-  else if (data.rgb == "cycle"){
-    cycledColour = (cycledColour+100) & 0xffff; console.log("Colour value is " + cycledColour);
-    lx.lightsColour(cycledColour, 0xffff, 0x0200, 0x0000, 0x0000);
-  }
-  
-  cycledColour = (cycledColour-100) & 0xffff; console.log("Colour value is " + cycledColour);
-  lx.lightsColour(cycledColour, 0xffff, 0x0200, 0x0000, 0x0000);
-  
-  console.log("Enabling debug");
-  lifx.setDebug(true);
-  
-  console.log("Requesting voltage");
-  var message = packet.getMcuRailVoltage();
-  lx.sendToAll(message);
-  
-  console.log("Requesting power state");
-  var message = packet.getPowerState();
-  lx.sendToAll(message);
-  
-  console.log("Requesting wifi info");
-  var message = packet.getWifiInfo();
-  lx.sendToAll(message);
-  
-  console.log("Requesting wifi firmware state");
-  var message = packet.getWifiFirmwareState();
-  lx.sendToAll(message);
-  
-  console.log("Requesting wifi state");
-  var message = packet.getWifiState({'interface':2});
-  lx.sendToAll(message);
-  
-  console.log("Requesting bulb label");
-  var message = packet.getBulbLabel();
-  lx.sendToAll(message);
-  
-  console.log("Requesting tags");
-  var message = packet.getTags();
-  lx.sendToAll(message);
-  
-  console.log("Requesting tag label for tag 1");
-  var message = packet.getTagLabels({tags:new Buffer([1,0,0,0,0,0,0,0])});
-  lx.sendToAll(message);
-  
-  console.log("Requesting time");
-  var message = packet.getTime();
-  lx.sendToAll(message);
-  
-  console.log("Requesting info");
-  var message = packet.getInfo();
-  lx.sendToAll(message);
-  
-  console.log("Requesting reset switch state");
-  var message = packet.getResetSwitchState();
-  lx.sendToAll(message);
-  
-  console.log("Requesting mesh info");
-  var message = packet.getMeshInfo();
-  lx.sendToAll(message);
-  
-  console.log("Requesting mesh firmware");
-  var message = packet.getMeshFirmware();
-  lx.sendToAll(message);
-  */
+ 
 }
